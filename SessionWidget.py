@@ -307,7 +307,7 @@ _CODEX_PATH_D = (
     "M8.462 9.23a.637.637 0 00-1.106.631l1.272 2.224-1.266 2.136a.636.636 0 101.095.649l1.454-2.455a.636.636 0 00.005-.64L8.462 9.23z"
 )
 
-_GRAD_STOPS = ((0.0, (0xB1, 0xA7, 0xFF)), (0.5, (0x7A, 0x9D, 0xFF)), (1.0, (0x39, 0x41, 0xFF)))
+_GRAD_STOPS = ((0.0, (0x7C, 0x3A, 0xED)), (1.0, (0xEC, 0x48, 0x99)))
 
 
 def _grad_color(t: float) -> str:
@@ -529,8 +529,18 @@ def draw_mascot(cv: Canvas, ox, oy, size, tint, use_gradient: bool):
     scale = size / 24.0
     cv.rrect(ox, oy, size, size, size * (4.5 / 24.0), fill="white", outline="")
     bloom = [(ox + px * scale, oy + py * scale) for px, py in _BLOOM_PTS]
-    bloom_color = CODEX_ACCENT if use_gradient else tint
-    cv.poly_abs(bloom, fill=bloom_color, outline="")
+    if use_gradient:
+        ymn, ymx = _bloom_y_range(bloom)
+        span = (ymx - ymn) or 1.0
+        for k in range(_GRAD_BANDS):
+            ylo = ymn + span * k / _GRAD_BANDS
+            yhi = ymn + span * (k + 1) / _GRAD_BANDS
+            band = _clip_below(_clip_above(bloom, ylo), yhi)
+            if len(band) >= 3:
+                t = (((ylo + yhi) / 2) - (oy + 3 * scale)) / (18 * scale)
+                cv.poly_abs(band, fill=_grad_color(t), outline="")
+    else:
+        cv.poly_abs(bloom, fill=tint, outline="")
     for sub in (_GT_PTS, _US_PTS):
         pts = [(ox + px * scale, oy + py * scale) for px, py in sub]
         cv.poly_abs(pts, fill="white", outline="")
@@ -677,9 +687,24 @@ if HAS_TRAY:
 
     _PS_SOLID = 0
 
+    def _grad_color_bgr(t: float) -> int:
+        """Same gradient as _GRAD_STOPS but returns a BGR COLORREF for GDI."""
+        t = max(0.0, min(1.0, t))
+        for k in range(len(_GRAD_STOPS) - 1):
+            t0, c0 = _GRAD_STOPS[k]
+            t1, c1 = _GRAD_STOPS[k + 1]
+            if t <= t1:
+                f = (t - t0) / (t1 - t0) if t1 > t0 else 0.0
+                r = int(c0[0] + f * (c1[0] - c0[0]))
+                g = int(c0[1] + f * (c1[1] - c0[1]))
+                b = int(c0[2] + f * (c1[2] - c0[2]))
+                return (b << 16) | (g << 8) | r
+        c = _GRAD_STOPS[-1][1]
+        return (c[2] << 16) | (c[1] << 8) | c[0]
+
     def _create_codex_tray_icon(size=32):
         """Draw the Codex bloom + '>_' prompt as a tray icon — same logo as
-        the widget mascot, solid blue (#3941FF)."""
+        the widget mascot, with the purple->pink gradient."""
         hdc_screen = _U32.GetDC(None)
         hdc = _G32.CreateCompatibleDC(hdc_screen)
         hbm_color = _G32.CreateCompatibleBitmap(hdc_screen, size, size)
@@ -687,30 +712,42 @@ if HAS_TRAY:
         _U32.ReleaseDC(None, hdc_screen)
 
         scale = size / 24.0
+        bloom = [(px * scale, py * scale) for px, py in _BLOOM_PTS]
+        ys = [p[1] for p in bloom]
+        ymn, ymx = min(ys), max(ys)
+        span = (ymx - ymn) or 1.0
 
-        def to_points(pts_24):
-            arr = (wintypes.POINT * len(pts_24))()
-            for i, (px, py) in enumerate(pts_24):
-                arr[i] = wintypes.POINT(int(px * scale), int(py * scale))
+        def to_points(pts):
+            arr = (wintypes.POINT * len(pts))()
+            for i, (px, py) in enumerate(pts):
+                arr[i] = wintypes.POINT(int(px), int(py))
             return arr
 
-        def fill_polygon(hdc, pts_24, brush_color):
+        def fill_polygon(hdc, pts, brush_color):
             brush = _G32.CreateSolidBrush(brush_color)
             old = _G32.SelectObject(hdc, brush)
-            pts = to_points(pts_24)
-            _G32.Polygon(hdc, pts, len(pts))
+            _G32.Polygon(hdc, to_points(pts), len(pts))
             _G32.SelectObject(hdc, old)
             _G32.DeleteObject(brush)
 
-        # Color bitmap: magenta bg (masked out), blue bloom, white ">_"
+        def clip_band(poly, ylo, yhi):
+            return _clip_below(_clip_above(poly, ylo), yhi)
+
+        # Color bitmap: magenta bg (masked out), gradient bloom, white ">_"
         old_bm = _G32.SelectObject(hdc, hbm_color)
-        bg = _G32.CreateSolidBrush(0xFF00FF)  # magenta — will be transparent
+        bg = _G32.CreateSolidBrush(0xFF00FF)
         _G32.SelectObject(hdc, bg)
-        _G32.PatBlt(hdc, 0, 0, size, size, 0x0042)  # PATCOPY
+        _G32.PatBlt(hdc, 0, 0, size, size, 0x0042)
         _G32.DeleteObject(bg)
-        fill_polygon(hdc, _BLOOM_PTS, 0xFF4139)  # BGR for #3941FF
-        fill_polygon(hdc, _GT_PTS, 0xFFFFFF)
-        fill_polygon(hdc, _US_PTS, 0xFFFFFF)
+        for k in range(_GRAD_BANDS):
+            ylo = ymn + span * k / _GRAD_BANDS
+            yhi = ymn + span * (k + 1) / _GRAD_BANDS
+            band = clip_band(bloom, ylo, yhi)
+            if len(band) >= 3:
+                t = (((ylo + yhi) / 2) - 3 * scale) / (18 * scale)
+                fill_polygon(hdc, band, _grad_color_bgr(t))
+        fill_polygon(hdc, [(px * scale, py * scale) for px, py in _GT_PTS], 0xFFFFFF)
+        fill_polygon(hdc, [(px * scale, py * scale) for px, py in _US_PTS], 0xFFFFFF)
         _G32.SelectObject(hdc, old_bm)
         _G32.DeleteDC(hdc)
 
@@ -718,7 +755,7 @@ if HAS_TRAY:
         hdc_mask = _G32.CreateCompatibleDC(None)
         old_mask = _G32.SelectObject(hdc_mask, hbm_mask)
         _G32.PatBlt(hdc_mask, 0, 0, size, size, 0x0042)  # WHITENESS
-        fill_polygon(hdc_mask, _BLOOM_PTS, 0x000000)  # black = opaque
+        fill_polygon(hdc_mask, bloom, 0x000000)
         _G32.SelectObject(hdc_mask, old_mask)
         _G32.DeleteDC(hdc_mask)
 
@@ -1182,7 +1219,14 @@ def write_snapshot(path: str, expanded: bool):
     ms = msize * scale / 24.0
     rrect(mox, moy, msize * scale, msize * scale, msize * scale * (4.5 / 24.0), fill="white")
     bloom = [(mox + px * ms, moy + py * ms) for px, py in _BLOOM_PTS]
-    d.polygon([coord for pt in bloom for coord in pt], fill=CODEX_ACCENT)
+    ys = [p[1] for p in bloom]; ymn, ymx = min(ys), max(ys); span = (ymx - ymn) or 1.0
+    for k in range(_GRAD_BANDS):
+        ylo = ymn + span * k / _GRAD_BANDS
+        yhi = ymn + span * (k + 1) / _GRAD_BANDS
+        band = _clip_below(_clip_above(bloom, ylo), yhi)
+        if len(band) >= 3:
+            t = (((ylo + yhi) / 2) - (moy + 3 * ms)) / (18 * ms)
+            d.polygon([coord for pt in band for coord in pt], fill=_grad_color(t))
     for sub in (_GT_PTS, _US_PTS):
         pts = [(mox + px * ms, moy + py * ms) for px, py in sub]
         d.polygon([coord for pt in pts for coord in pt], fill="white")
