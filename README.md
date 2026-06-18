@@ -14,6 +14,8 @@ a weekly usage bar — on your desktop at all times.
 - The real Codex logo (sparkle/bloom with the `>_` prompt, purple→blue gradient)
 - No network calls, no credentials read, no telemetry
 
+![Codex Session Widget](codex-session-widget.png)
+
 ## Requirements
 
 - **Windows 11** (10 also works)
