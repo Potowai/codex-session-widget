@@ -54,6 +54,7 @@ WEEK_S = 7 * 24 * 3600
 CODEX_HOME = os.path.join(os.path.expanduser("~"), ".codex")
 SESSIONS_DIR = os.path.join(CODEX_HOME, "sessions")
 STATE_FILE = os.path.join(CODEX_HOME, "widget-state.json")
+ICON_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "codex-icon.ico")
 
 
 # --- session reconstruction --------------------------------------------------
@@ -677,6 +678,23 @@ if HAS_TRAY:
     _U32.GetDC.restype = wintypes.HDC
     _U32.GetDC.argtypes = [wintypes.HWND]
     _U32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+    _U32.LoadImageW.restype = wintypes.HANDLE
+    _U32.LoadImageW.argtypes = [
+        wintypes.HINSTANCE, wintypes.LPCWSTR, wintypes.UINT,
+        wintypes.INT, wintypes.INT, wintypes.UINT]
+
+    _IMAGE_ICON = 1
+    _LR_LOADFROMFILE = 0x00000010
+
+    def _load_icon_from_file(path: str, size: int = 0):
+        """Load a .ico as HICON. Returns None if the file is missing/invalid."""
+        try:
+            if not os.path.isfile(path):
+                return None
+        except Exception:
+            return None
+        h = _U32.LoadImageW(0, path, _IMAGE_ICON, size, size, _LR_LOADFROMFILE)
+        return h if h else None
 
     class _ICONINFO(ctypes.Structure):
         _fields_ = [
@@ -825,7 +843,7 @@ if HAS_TRAY:
                 0, self._cls_name, "Codex Tray", 0, 0, 0, 0, 0,
                 ctypes.c_void_p(-3), None, self._hinst, None)
 
-            self._hicon = _create_codex_tray_icon(32)
+            self._hicon = _load_icon_from_file(ICON_FILE, 32) or _create_codex_tray_icon(32)
 
             nid = _NOTIFYICONDATAW()
             nid.cbSize = ctypes.sizeof(nid)
@@ -1261,11 +1279,39 @@ def write_snapshot(path: str, expanded: bool):
     print(f"snapshot: {path}")
 
 
+def write_icon(path: str):
+    """Render the Codex bloom + '>_' as a multi-size .ico (transparent bg,
+    purple->pink gradient bloom, white prompt). Pillow-only (build step)."""
+    from PIL import Image, ImageDraw
+    size = 256
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    scale = size / 24.0
+    bloom = [(px * scale, py * scale) for px, py in _BLOOM_PTS]
+    ys = [p[1] for p in bloom]; ymn, ymx = min(ys), max(ys); span = (ymx - ymn) or 1.0
+    for k in range(_GRAD_BANDS):
+        ylo = ymn + span * k / _GRAD_BANDS
+        yhi = ymn + span * (k + 1) / _GRAD_BANDS
+        band = _clip_below(_clip_above(bloom, ylo), yhi)
+        if len(band) >= 3:
+            t = (((ylo + yhi) / 2) - 3 * scale) / (18 * scale)
+            d.polygon([coord for pt in band for coord in pt], fill=_grad_color(t))
+    for sub in (_GT_PTS, _US_PTS):
+        pts = [(px * scale, py * scale) for px, py in sub]
+        d.polygon([coord for pt in pts for coord in pt], fill="white")
+    img.save(path, format="ICO", sizes=[(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
+    print(f"icon: {path}")
+
+
 def main():
     if "--snapshot" in sys.argv:
         expanded = "--expanded" in sys.argv
         path = sys.argv[-1] if sys.argv[-1].endswith(".png") else "codex-session-widget.png"
         write_snapshot(path, expanded)
+        return
+    if "--icon" in sys.argv:
+        path = sys.argv[-1] if sys.argv[-1].endswith(".ico") else ICON_FILE
+        write_icon(path)
         return
     root = tk.Tk()
     WidgetApp(root)

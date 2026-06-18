@@ -29,10 +29,16 @@ if (-not (Test-Path $pyw)) { $pyw = $pyExe }  # fallback to console python
 Write-Output "-> python: $pyExe"
 Write-Output "-> pythonw: $pyw"
 
-# --- 1. copy the widget -----------------------------------------------------
+# --- 1. copy the widget + icon ----------------------------------------------
 New-Item -ItemType Directory -Force -Path $dest | Out-Null
 Copy-Item -Force (Join-Path $dir "SessionWidget.py") $exe
-Write-Output "OK widget copied -> $dest"
+$iconSrc = Join-Path $dir "codex-icon.ico"
+if (Test-Path $iconSrc) {
+    Copy-Item -Force $iconSrc (Join-Path $dest "codex-icon.ico")
+    Write-Output "OK widget + icon copied -> $dest"
+} else {
+    Write-Output "OK widget copied (no .ico - tray will draw a fallback icon) -> $dest"
+}
 
 # --- 2. startup shortcut ----------------------------------------------------
 $startup = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup"
@@ -46,7 +52,8 @@ $sc.Arguments = "`"$exe`""
 $sc.WorkingDirectory = $dest
 $sc.WindowStyle = 7  # minimized (no console flash even with python.exe)
 $sc.Description = "Codex Session Widget"
-$sc.IconLocation = "$pyw,0"
+if (Test-Path $iconSrc) { $sc.IconLocation = "$dest\codex-icon.ico,0" }
+else { $sc.IconLocation = "$pyw,0" }
 $sc.Save()
 Write-Output "OK startup shortcut -> $shortcutPath"
 
