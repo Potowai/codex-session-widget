@@ -6,6 +6,7 @@
 param(
     [string]$Out = "codex-session-widget.png",
     [string]$Icon = "codex-icon.ico",
+    [string]$IconPng = "codex-icon.png",
     [switch]$Expanded
 )
 $ErrorActionPreference = "Stop"
@@ -19,3 +20,5 @@ if (-not (Test-Path $Out)) { Write-Error "snapshot failed" }
 
 & python $py --icon $Icon
 if (-not (Test-Path $Icon)) { Write-Error "icon failed" }
+# write_icon also emits codex-icon.png next to the .ico
+if (-not (Test-Path $IconPng)) { Write-Error "icon png failed" }

@@ -1,4 +1,8 @@
-# Codex Session Widget
+<p align="center">
+  <img src="codex-icon.png" width="128" alt="Codex Session Widget logo" />
+</p>
+
+<h1 align="center">Codex Session Widget</h1>
 
 A tiny floating **Windows 11** desktop widget that shows your **OpenAI Codex
 5-hour usage window**: the real % quota remaining, a live reset countdown, and

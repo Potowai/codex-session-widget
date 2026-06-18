@@ -1279,11 +1279,9 @@ def write_snapshot(path: str, expanded: bool):
     print(f"snapshot: {path}")
 
 
-def write_icon(path: str):
-    """Render the Codex bloom + '>_' as a multi-size .ico (transparent bg,
-    purple->pink gradient bloom, white prompt). Pillow-only (build step)."""
+def _render_icon_image(size: int = 256):
+    """Render the Codex bloom + '>_' on a transparent RGBA image."""
     from PIL import Image, ImageDraw
-    size = 256
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     scale = size / 24.0
@@ -1299,8 +1297,20 @@ def write_icon(path: str):
     for sub in (_GT_PTS, _US_PTS):
         pts = [(px * scale, py * scale) for px, py in sub]
         d.polygon([coord for pt in pts for coord in pt], fill="white")
-    img.save(path, format="ICO", sizes=[(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
+    return img
+
+
+def write_icon(path: str, png_path: Optional[str] = None):
+    """Render the Codex bloom + '>_' as a multi-size .ico (transparent bg,
+    purple->pink gradient bloom, white prompt). Optionally also save a PNG
+    (for the README header). Pillow-only (build step)."""
+    img = _render_icon_image(256)
+    img.save(path, format="ICO",
+             sizes=[(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
     print(f"icon: {path}")
+    if png_path:
+        img.save(png_path, format="PNG")
+        print(f"icon png: {png_path}")
 
 
 def main():
@@ -1310,8 +1320,9 @@ def main():
         write_snapshot(path, expanded)
         return
     if "--icon" in sys.argv:
-        path = sys.argv[-1] if sys.argv[-1].endswith(".ico") else ICON_FILE
-        write_icon(path)
+        ico_path = sys.argv[-1] if sys.argv[-1].endswith(".ico") else ICON_FILE
+        png_path = ico_path[:-4] + ".png" if ico_path.endswith(".ico") else "codex-icon.png"
+        write_icon(ico_path, png_path)
         return
     root = tk.Tk()
     WidgetApp(root)
