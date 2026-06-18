@@ -643,6 +643,98 @@ if HAS_TRAY:
     _S32.Shell_NotifyIconW.restype = wintypes.BOOL
     _S32.Shell_NotifyIconW.argtypes = [wintypes.DWORD, ctypes.c_void_p]
 
+    _U32.CreateIconIndirect.restype = wintypes.HICON
+    _U32.CreateIconIndirect.argtypes = [ctypes.c_void_p]
+    _U32.DestroyIcon.argtypes = [wintypes.HICON]
+    _G32.CreateCompatibleDC.restype = wintypes.HDC
+    _G32.CreateCompatibleDC.argtypes = [wintypes.HDC]
+    _G32.CreateCompatibleBitmap.restype = wintypes.HBITMAP
+    _G32.CreateCompatibleBitmap.argtypes = [wintypes.HDC, wintypes.INT, wintypes.INT]
+    _G32.CreateBitmap.restype = wintypes.HBITMAP
+    _G32.CreateBitmap.argtypes = [
+        wintypes.INT, wintypes.INT, wintypes.UINT, wintypes.UINT, ctypes.c_void_p]
+    _G32.SelectObject.restype = wintypes.HGDIOBJ
+    _G32.SelectObject.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
+    _G32.DeleteDC.argtypes = [wintypes.HDC]
+    _G32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+    _G32.CreateSolidBrush.restype = wintypes.HBRUSH
+    _G32.CreateSolidBrush.argtypes = [wintypes.COLORREF]
+    _G32.Ellipse.argtypes = [
+        wintypes.HDC, wintypes.INT, wintypes.INT, wintypes.INT, wintypes.INT]
+    _G32.SetPixelV.argtypes = [
+        wintypes.HDC, wintypes.INT, wintypes.INT, wintypes.COLORREF]
+    _G32.MoveToEx.argtypes = [
+        wintypes.HDC, wintypes.INT, wintypes.INT, ctypes.POINTER(wintypes.POINT)]
+    _G32.LineTo.argtypes = [wintypes.HDC, wintypes.INT, wintypes.INT]
+    _G32.CreatePen.restype = wintypes.HPEN
+    _G32.CreatePen.argtypes = [wintypes.INT, wintypes.INT, wintypes.COLORREF]
+    _G32.GetDeviceCaps.argtypes = [wintypes.HDC, wintypes.INT]
+    _U32.GetDC.restype = wintypes.HDC
+    _U32.GetDC.argtypes = [wintypes.HWND]
+    _U32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+
+    class _ICONINFO(ctypes.Structure):
+        _fields_ = [
+            ("fIcon", wintypes.BOOL), ("xHotspot", wintypes.DWORD),
+            ("yHotspot", wintypes.DWORD),
+            ("hbmMask", wintypes.HBITMAP), ("hbmColor", wintypes.HBITMAP),
+        ]
+
+    _PS_SOLID = 0
+
+    def _create_clock_icon(size=32):
+        """Draw a blue clock face with white hands — distinct from the Codex
+        logo so users don't confuse it with Codex's own tray icon."""
+        hdc_screen = _U32.GetDC(None)
+        hdc = _G32.CreateCompatibleDC(hdc_screen)
+        hbm_color = _G32.CreateCompatibleBitmap(hdc_screen, size, size)
+        hbm_mask = _G32.CreateBitmap(size, size, 1, 1, None)
+        _U32.ReleaseDC(None, hdc_screen)
+
+        old_bm = _G32.SelectObject(hdc, hbm_color)
+        blue = _G32.CreateSolidBrush(0xFF4139)  # BGR for #3941FF
+        white = _G32.CreateSolidBrush(0xFFFFFF)
+        _G32.SelectObject(hdc, blue)
+        _G32.Ellipse(hdc, 1, 1, size - 1, size - 1)
+        _G32.DeleteObject(blue)
+
+        cx = cy = size // 2
+        pen_w = max(2, size // 10)
+        pen_white = _G32.CreatePen(_PS_SOLID, pen_w, 0xFFFFFF)
+        _G32.SelectObject(hdc, pen_white)
+        _G32.MoveToEx(hdc, cx, cy, None)
+        _G32.LineTo(hdc, cx, cy - size // 4)        # hand → 12
+        _G32.MoveToEx(hdc, cx, cy, None)
+        _G32.LineTo(hdc, cx + size // 5, cy)        # hand → 3
+        _G32.DeleteObject(pen_white)
+
+        dot = _G32.CreateSolidBrush(0xFFFFFF)
+        _G32.SelectObject(hdc, dot)
+        _G32.Ellipse(hdc, cx - 2, cy - 2, cx + 2, cy + 2)
+        _G32.DeleteObject(dot)
+
+        _G32.SelectObject(hdc, old_bm)
+        _G32.DeleteDC(hdc)
+
+        hdc_mask = _G32.CreateCompatibleDC(None)
+        old_mask = _G32.SelectObject(hdc_mask, hbm_mask)
+        _G32.PatBlt = _G32.PatBlt if hasattr(_G32, "PatBlt") else _G32.PatBlt
+        _G32.PatBlt.argtypes = [wintypes.HDC, wintypes.INT, wintypes.INT, wintypes.INT, wintypes.INT, wintypes.DWORD]
+        _G32.PatBlt(hdc_mask, 0, 0, size, size, 0x0042)  # WHITENESS
+        _G32.SelectObject(hdc_mask, old_mask)
+        _G32.DeleteDC(hdc_mask)
+
+        ii = _ICONINFO()
+        ii.fIcon = True
+        ii.xHotspot = size // 2
+        ii.yHotspot = size // 2
+        ii.hbmMask = hbm_mask
+        ii.hbmColor = hbm_color
+        hicon = _U32.CreateIconIndirect(ctypes.byref(ii))
+        _G32.DeleteObject(hbm_color)
+        _G32.DeleteObject(hbm_mask)
+        return hicon
+
     class TrayIcon:
         def __init__(self, tooltip, on_show, on_quit):
             self._tooltip = tooltip[:127]
@@ -698,7 +790,7 @@ if HAS_TRAY:
                 0, self._cls_name, "Codex Tray", 0, 0, 0, 0, 0,
                 ctypes.c_void_p(-3), None, self._hinst, None)
 
-            self._hicon = _U32.LoadIconW(0, _IDI_APPLICATION)
+            self._hicon = _create_clock_icon(32)
 
             nid = _NOTIFYICONDATAW()
             nid.cbSize = ctypes.sizeof(nid)
@@ -720,6 +812,8 @@ if HAS_TRAY:
                 _S32.Shell_NotifyIconW(_NIM_DELETE, ctypes.byref(self._nid))
             if self._hwnd:
                 _U32.DestroyWindow(self._hwnd)
+            if self._hicon:
+                _U32.DestroyIcon(self._hicon)
             _U32.UnregisterClassW(self._cls_name, self._hinst)
 
         def _show_menu(self, hwnd):
