@@ -3,3 +3,8 @@ SessionWidget.app/
 .DS_Store
 *.log
 build/
+
+# Windows / Python
+__pycache__/
+*.pyc
+codex-session-widget.png

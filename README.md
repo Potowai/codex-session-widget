@@ -1,101 +1,142 @@
-# Claude Session Widget
+# Codex Session Widget
 
-A tiny floating macOS desktop widget that shows your **Claude Code 5-hour usage
-window**: a live "resets in" countdown and how much you've used — the same
-numbers claude.ai shows, on your desktop at all times.
+A tiny floating **Windows 11** desktop widget that shows your **OpenAI Codex
+5-hour usage window**: the real % quota remaining, a live reset countdown, and
+a weekly usage bar — on your desktop at all times.
 
-- Big countdown: time left in the current 5-hour window
-- `31% used · resets 22:50` — real token utilisation + reset time
-- Progress bar = % used (green through 50%, orange through 80%, red above 80%)
-- Bottom arrow expands a matching weekly usage bar from the same cache
-- A little Clawd mascot holding a stopwatch 🙂
-
-It reads the exact figures from Anthropic's own rate-limit headers, so it
-matches claude.ai to the minute (including the weekly limit).
+- Big number: **% quota remaining** (real server-side figure from Codex transcripts)
+- Sub-line: `% used  resets HH:MM` — real usage + reset time
+- Progress bar = % used (blue Codex under 50%, amber through 80%, red above)
+- Optional weekly usage bar (right-click → Show weekly usage)
+- Minimises to the **system tray** — close the widget and it lives in your
+  taskbar notification area; click the tray icon to bring it back
+- Tray tooltip shows the live % remaining
+- The real Codex logo (sparkle/bloom with the `>_` prompt, purple→blue gradient)
+- No network calls, no credentials read, no telemetry
 
 ## Requirements
 
-- macOS (Apple Silicon or Intel)
-- **Xcode command line tools** (`xcode-select --install`) — for `swiftc`
-- A Claude **Pro/Max** subscription used via **Claude Code** (this tracks the
-  Claude Code/subscription 5-hour window)
+- **Windows 11** (10 also works)
+- **Python 3.10+** with Tkinter (`python.org` installer includes it; check
+  "Add python to PATH")
+- A **ChatGPT Plus/Pro** subscription used via **Codex** (CLI or desktop app)
 
 ## Install
 
-```bash
-unzip claude-session-widget.zip && cd claude-session-widget
-./install.sh
+```powershell
+cd codex-session-widget
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-That builds the widget from source, installs it to `~/Applications`, and sets up
-two per-user launch agents that start at login. **No sudo, nothing system-wide.**
-
-Prefer zero network calls? Install the widget only — it will estimate the window
-from your local transcripts instead (see "How it works"):
-
-```bash
-./install.sh --widget-only
-```
+That copies the widget to `%LOCALAPPDATA%\CodexSessionWidget` and creates a
+shortcut in your **Startup** folder so it starts at login. **No admin, nothing
+system-wide.**
 
 Uninstall any time:
 
-```bash
-./uninstall.sh
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\uninstall.ps1
 ```
 
-## How it works (and what to check before you trust it)
+Run it once now without installing:
 
-This tool touches your Claude credentials, so please read the ~250 lines of
-`SessionWidget.swift` and `session_usage_poll.py` before running it.
+```powershell
+pythonw SessionWidget.py
+```
 
-The 5-hour usage window is a **server-side** counter that spans every surface
-(Claude Code, claude.ai web, mobile). Your local Claude Code transcripts only
-see Claude Code, so reconstructing the window from them drifts whenever you also
-use the web/app. The only way to get the exact number is to read Anthropic's
-rate-limit headers — and those only come back on a real API call. So:
+## How it works
 
-- **`session_usage_poll.py`** (a launch agent, every 10 minutes):
-  - Reads your existing **Claude Code OAuth token** from the login keychain
-    (the `Claude Code-credentials` item that Claude Code itself created — the
-    first run may pop a one-time keychain "allow" prompt).
-  - Makes **one tiny 1-token `/v1/messages` call** and reads the
-    `anthropic-ratelimit-unified-*` response headers.
-  - Writes them to `~/.claude/session-usage.json`. That's it.
-  - It **only calls when you've used Claude Code in the last ~12 minutes**, so
-    an idle Mac never pings (a call after the window expired would itself *open*
-    a new window). It clears `ANTHROPIC_API_KEY` so the call always bills to
-    your subscription, never pay-as-you-go API credits. Cost is negligible.
-- **`SessionWidget.swift`** just reads `~/.claude/session-usage.json` and draws
-  the card. With `--widget-only` (no poller) it instead estimates the window by
-  chaining 5-hour blocks across your transcript timestamps and labels it `est`.
+The widget reads **real usage data** from your local Codex transcripts — no
+network, no credentials.
 
-Nothing is sent anywhere except that one call to `api.anthropic.com` with your
-own token. No telemetry, no third-party servers, no analytics.
+### Where the numbers come from
+
+Codex writes session transcripts to `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`.
+Each file is a JSONL log of events. Among the event types, `token_count` events
+carry a `rate_limits` payload that Codex itself receives from OpenAI's servers:
+
+```json
+{
+  "type": "event_msg",
+  "payload": {
+    "type": "token_count",
+    "rate_limits": {
+      "primary": {
+        "used_percent": 45.0,
+        "window_minutes": 300,
+        "resets_at": 1781699187
+      },
+      "secondary": {
+        "used_percent": 22.0,
+        "window_minutes": 10080,
+        "resets_at": 1782062642
+      },
+      "plan_type": "plus"
+    }
+  }
+}
+```
+
+- **`primary`** = the 5-hour rolling window (300 min). `used_percent` is the
+  real server-side % — the same number ChatGPT/Codex shows in its UI.
+- **`secondary`** = the 7-day weekly window (10080 min).
+- `resets_at` is a Unix timestamp.
+
+The widget scans all transcripts from the last 36h, finds the most recent
+`rate_limits` event, and displays:
+- **Big number**: `100 - used_percent` = % remaining
+- **Sub-line**: `used_percent% used  resets HH:MM`
+- **Bar**: filled to `used_percent / 100`
+- **Weekly bar** (optional): `secondary.used_percent`
+
+If no `rate_limits` event exists (e.g. before Codex's first run), it falls back
+to a transcript-timestamp reconstruction flagged `est`.
+
+### System tray
+
+When you close the widget (right-click → **Hide to tray**, or the window's
+close action), it withdraws from the desktop and lives as an icon in the
+Windows notification area (system tray). The tray tooltip shows the live %
+remaining. Left-click the tray icon to show the widget again; right-click for
+a menu with **Show widget** and **Quit**.
+
+The tray is implemented with raw Win32 `Shell_NotifyIconW` via `ctypes` — no
+external dependency, stdlib only.
 
 ## Files
 
 | file | what it is |
 |---|---|
-| `SessionWidget.swift` | the widget (native AppKit, no dependencies) |
-| `session_usage_poll.py` | the 10-min usage poller (Python stdlib only) |
-| `build.sh` | compiles the `.app` with `swiftc` |
-| `install.sh` / `uninstall.sh` | per-user launchd setup / teardown |
+| `SessionWidget.py` | the widget (Python stdlib + Tkinter + ctypes, no dependencies) |
+| `install.ps1` / `uninstall.ps1` | per-user startup-shortcut setup / teardown |
+| `build.ps1` | renders a PNG snapshot for the README (uses Pillow) |
 
-Logs: `/tmp/claude-session-widget.log`, `/tmp/claude-session-usage.log`.
-Cache: `~/.claude/session-usage.json` (inspect it any time).
+State: `~/.codex/widget-state.json` (position + weekly toggle).
+Data source: `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` (events with
+`rate_limits`).
+Logs: none (it's silent — read the source, it's ~900 lines).
 
 ## Notes / FAQ
 
-- **Does it work without the poller?** Yes — `--widget-only` gives a transcript
-  estimate with no network calls. It can be off by up to ~1.5h if you also use
-  claude.ai web/mobile, and it's flagged `est`.
-- **Will the token expire?** Claude Code refreshes it in the keychain as you use
-  it. If it's ever stale the poller just keeps the last known reset and the
-  widget falls back to the estimate.
-- **Apple Silicon vs Intel?** `install.sh` resolves your `python3` automatically.
-- It's ad-hoc code-signed locally at build time, so there's no "unidentified
-  developer" gate — you built it yourself.
+- **Is the % accurate?** Yes — it's the real server-side figure from Codex's own
+  `token_count`/`rate_limits` events. It matches what Codex shows in its UI.
+  The only caveat: it updates when Codex writes a new transcript event, so there
+  can be a short lag (seconds) after you stop using Codex.
+- **It says "Idle" but I'm using Codex?** A new session's first `token_count`
+  event may take a few seconds to appear. Right-click → Refresh now, or wait
+  up to a minute.
+- **Where's the tray icon?** In the Windows notification area (bottom-right,
+  near the clock). If it's in the overflow, click the `^` arrow to find it.
+- **DPI?** It auto-scales to your display scale (per-monitor v2 awareness on
+  Windows 11).
+- **No poller?** No need — Codex writes the real % directly to transcripts.
+  No network calls, ever.
+
+## Origin
+
+Forked from the [Claude Session Widget](https://github.com/...) for macOS
+(Swift/AppKit) — re-implemented for Windows 11 + OpenAI Codex in Python/Tkinter.
 
 Free to use and modify for personal or non-commercial purposes (PolyForm
-NonCommercial 1.0.0 — see LICENSE). Built by a Claude Code user for Claude Code
-users — not affiliated with Anthropic.
+NonCommercial 1.0.0 — see LICENSE). Built by a Codex user for Codex users — not
+affiliated with OpenAI.
