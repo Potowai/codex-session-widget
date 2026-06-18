@@ -529,18 +529,8 @@ def draw_mascot(cv: Canvas, ox, oy, size, tint, use_gradient: bool):
     scale = size / 24.0
     cv.rrect(ox, oy, size, size, size * (4.5 / 24.0), fill="white", outline="")
     bloom = [(ox + px * scale, oy + py * scale) for px, py in _BLOOM_PTS]
-    if use_gradient:
-        ymn, ymx = _bloom_y_range(bloom)
-        span = (ymx - ymn) or 1.0
-        for k in range(_GRAD_BANDS):
-            ylo = ymn + span * k / _GRAD_BANDS
-            yhi = ymn + span * (k + 1) / _GRAD_BANDS
-            band = _clip_below(_clip_above(bloom, ylo), yhi)
-            if len(band) >= 3:
-                t = (((ylo + yhi) / 2) - (oy + 3 * scale)) / (18 * scale)
-                cv.poly_abs(band, fill=_grad_color(t), outline="")
-    else:
-        cv.poly_abs(bloom, fill=tint, outline="")
+    bloom_color = CODEX_ACCENT if use_gradient else tint
+    cv.poly_abs(bloom, fill=bloom_color, outline="")
     for sub in (_GT_PTS, _US_PTS):
         pts = [(ox + px * scale, oy + py * scale) for px, py in sub]
         cv.poly_abs(pts, fill="white", outline="")
@@ -661,6 +651,11 @@ if HAS_TRAY:
     _G32.CreateSolidBrush.argtypes = [wintypes.COLORREF]
     _G32.Ellipse.argtypes = [
         wintypes.HDC, wintypes.INT, wintypes.INT, wintypes.INT, wintypes.INT]
+    _G32.Polygon.restype = wintypes.BOOL
+    _G32.Polygon.argtypes = [wintypes.HDC, ctypes.POINTER(wintypes.POINT), wintypes.INT]
+    _G32.PatBlt.restype = wintypes.BOOL
+    _G32.PatBlt.argtypes = [
+        wintypes.HDC, wintypes.INT, wintypes.INT, wintypes.INT, wintypes.INT, wintypes.DWORD]
     _G32.SetPixelV.argtypes = [
         wintypes.HDC, wintypes.INT, wintypes.INT, wintypes.COLORREF]
     _G32.MoveToEx.argtypes = [
@@ -682,45 +677,48 @@ if HAS_TRAY:
 
     _PS_SOLID = 0
 
-    def _create_clock_icon(size=32):
-        """Draw a blue clock face with white hands — distinct from the Codex
-        logo so users don't confuse it with Codex's own tray icon."""
+    def _create_codex_tray_icon(size=32):
+        """Draw the Codex bloom + '>_' prompt as a tray icon — same logo as
+        the widget mascot, solid blue (#3941FF)."""
         hdc_screen = _U32.GetDC(None)
         hdc = _G32.CreateCompatibleDC(hdc_screen)
         hbm_color = _G32.CreateCompatibleBitmap(hdc_screen, size, size)
         hbm_mask = _G32.CreateBitmap(size, size, 1, 1, None)
         _U32.ReleaseDC(None, hdc_screen)
 
+        scale = size / 24.0
+
+        def to_points(pts_24):
+            arr = (wintypes.POINT * len(pts_24))()
+            for i, (px, py) in enumerate(pts_24):
+                arr[i] = wintypes.POINT(int(px * scale), int(py * scale))
+            return arr
+
+        def fill_polygon(hdc, pts_24, brush_color):
+            brush = _G32.CreateSolidBrush(brush_color)
+            old = _G32.SelectObject(hdc, brush)
+            pts = to_points(pts_24)
+            _G32.Polygon(hdc, pts, len(pts))
+            _G32.SelectObject(hdc, old)
+            _G32.DeleteObject(brush)
+
+        # Color bitmap: magenta bg (masked out), blue bloom, white ">_"
         old_bm = _G32.SelectObject(hdc, hbm_color)
-        blue = _G32.CreateSolidBrush(0xFF4139)  # BGR for #3941FF
-        white = _G32.CreateSolidBrush(0xFFFFFF)
-        _G32.SelectObject(hdc, blue)
-        _G32.Ellipse(hdc, 1, 1, size - 1, size - 1)
-        _G32.DeleteObject(blue)
-
-        cx = cy = size // 2
-        pen_w = max(2, size // 10)
-        pen_white = _G32.CreatePen(_PS_SOLID, pen_w, 0xFFFFFF)
-        _G32.SelectObject(hdc, pen_white)
-        _G32.MoveToEx(hdc, cx, cy, None)
-        _G32.LineTo(hdc, cx, cy - size // 4)        # hand → 12
-        _G32.MoveToEx(hdc, cx, cy, None)
-        _G32.LineTo(hdc, cx + size // 5, cy)        # hand → 3
-        _G32.DeleteObject(pen_white)
-
-        dot = _G32.CreateSolidBrush(0xFFFFFF)
-        _G32.SelectObject(hdc, dot)
-        _G32.Ellipse(hdc, cx - 2, cy - 2, cx + 2, cy + 2)
-        _G32.DeleteObject(dot)
-
+        bg = _G32.CreateSolidBrush(0xFF00FF)  # magenta — will be transparent
+        _G32.SelectObject(hdc, bg)
+        _G32.PatBlt(hdc, 0, 0, size, size, 0x0042)  # PATCOPY
+        _G32.DeleteObject(bg)
+        fill_polygon(hdc, _BLOOM_PTS, 0xFF4139)  # BGR for #3941FF
+        fill_polygon(hdc, _GT_PTS, 0xFFFFFF)
+        fill_polygon(hdc, _US_PTS, 0xFFFFFF)
         _G32.SelectObject(hdc, old_bm)
         _G32.DeleteDC(hdc)
 
+        # Mask bitmap: white bg (transparent), black bloom (opaque)
         hdc_mask = _G32.CreateCompatibleDC(None)
         old_mask = _G32.SelectObject(hdc_mask, hbm_mask)
-        _G32.PatBlt = _G32.PatBlt if hasattr(_G32, "PatBlt") else _G32.PatBlt
-        _G32.PatBlt.argtypes = [wintypes.HDC, wintypes.INT, wintypes.INT, wintypes.INT, wintypes.INT, wintypes.DWORD]
         _G32.PatBlt(hdc_mask, 0, 0, size, size, 0x0042)  # WHITENESS
+        fill_polygon(hdc_mask, _BLOOM_PTS, 0x000000)  # black = opaque
         _G32.SelectObject(hdc_mask, old_mask)
         _G32.DeleteDC(hdc_mask)
 
@@ -790,7 +788,7 @@ if HAS_TRAY:
                 0, self._cls_name, "Codex Tray", 0, 0, 0, 0, 0,
                 ctypes.c_void_p(-3), None, self._hinst, None)
 
-            self._hicon = _create_clock_icon(32)
+            self._hicon = _create_codex_tray_icon(32)
 
             nid = _NOTIFYICONDATAW()
             nid.cbSize = ctypes.sizeof(nid)
@@ -1184,14 +1182,7 @@ def write_snapshot(path: str, expanded: bool):
     ms = msize * scale / 24.0
     rrect(mox, moy, msize * scale, msize * scale, msize * scale * (4.5 / 24.0), fill="white")
     bloom = [(mox + px * ms, moy + py * ms) for px, py in _BLOOM_PTS]
-    ys = [p[1] for p in bloom]; ymn, ymx = min(ys), max(ys); span = (ymx - ymn) or 1.0
-    for k in range(_GRAD_BANDS):
-        ylo = ymn + span * k / _GRAD_BANDS
-        yhi = ymn + span * (k + 1) / _GRAD_BANDS
-        band = _clip_below(_clip_above(bloom, ylo), yhi)
-        if len(band) >= 3:
-            t = (((ylo + yhi) / 2) - (moy + 3 * ms)) / (18 * ms)
-            d.polygon([coord for pt in band for coord in pt], fill=_grad_color(t))
+    d.polygon([coord for pt in bloom for coord in pt], fill=CODEX_ACCENT)
     for sub in (_GT_PTS, _US_PTS):
         pts = [(mox + px * ms, moy + py * ms) for px, py in sub]
         d.polygon([coord for pt in pts for coord in pt], fill="white")
